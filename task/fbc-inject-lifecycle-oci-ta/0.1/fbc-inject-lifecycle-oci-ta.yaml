@@ -1,0 +1,227 @@
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  labels:
+    app.kubernetes.io/version: "0.1"
+  annotations:
+    tekton.dev/pipelines.minVersion: "0.12.1"
+    tekton.dev/tags: "konflux"
+  name: fbc-inject-lifecycle-oci-ta
+spec:
+  description: >-
+    The fbc-inject-lifecycle-oci-ta task injects lifecycle data into a file-based catalog (FBC) component.
+    Checks whether the component is eligible for lifecycle injection (targets OCP 5.0+),
+    determines the target OLM packages from the Dockerfile, generates
+    lifecycle JSON files using plcc2fbc, and injects them into the
+    catalog source directories. If the component is not eligible, the task
+    succeeds without performing injection. If the component is eligible,
+    any failure to find packages, generate lifecycle data, or inject it
+    results in task failure.
+  params:
+    - default: .
+      description: Path to the directory to use as context.
+      name: CONTEXT
+      type: string
+    - default: ./Dockerfile
+      description: Path to the Dockerfile to build.
+      name: DOCKERFILE
+      type: string
+    - name: ociArtifactExpiresAfter
+      description: Expiration date for the trusted artifacts created in the
+        OCI repository. An empty string means the artifacts do not expire.
+      type: string
+      default: ""
+    - name: ociStorage
+      description: The OCI repository where the Trusted Artifacts are stored.
+      type: string
+    - description: The Trusted Artifact URI pointing to the artifact with the application source code.
+      name: SOURCE_ARTIFACT
+      type: string
+  results:
+    - name: SOURCE_ARTIFACT
+      description: The Trusted Artifact URI pointing to the artifact with the application source code.
+    - name: TEST_OUTPUT
+      description: Tekton task test output.
+  volumes:
+    - name: workdir
+      emptyDir: {}
+    - name: shared
+      emptyDir: {}
+  stepTemplate:
+    volumeMounts:
+      - mountPath: /var/workdir
+        name: workdir
+      - mountPath: /shared
+        name: shared
+  steps:
+    - name: use-trusted-artifact
+      image: quay.io/konflux-ci/build-trusted-artifacts:latest@sha256:a246cf2267fe6fa68ae8885c6ca4141923edca3ccf9b56838d1ebe369d31b46d
+      computeResources:
+        requests:
+          memory: 4Gi
+          cpu: 50m
+        limits:
+          memory: 4Gi
+      args:
+        - use
+        - $(params.SOURCE_ARTIFACT)=/var/workdir/source
+
+    - name: check-lifecycle-eligibility
+      image: quay.io/asergien/operator-foundry@sha256:593353f989a03b3bbc97cab01d96086b1248d52c16bdb7ac33af4a091420edcf
+      computeResources:
+        requests:
+          memory: 64Mi
+          cpu: 50m
+        limits:
+          memory: 64Mi
+      workingDir: /var/workdir/source
+      securityContext:
+        runAsUser: 0
+      onError: continue
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        operator-foundry fbc check-lifecycle-eligibility \
+          --dockerfile "$(params.DOCKERFILE)" \
+          --output /shared/eligible
+
+        echo "[INFO] Component eligible for lifecycle injection (targets OCP 5.0+): $(cat /shared/eligible)"
+
+    - name: get-packages
+      image: quay.io/asergien/operator-foundry@sha256:593353f989a03b3bbc97cab01d96086b1248d52c16bdb7ac33af4a091420edcf
+      computeResources:
+        requests:
+          memory: 64Mi
+          cpu: 50m
+        limits:
+          memory: 64Mi
+      workingDir: /var/workdir/source
+      securityContext:
+        runAsUser: 0
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        if [[ ! -s /shared/eligible ]] || [[ "$(cat /shared/eligible)" != "true" ]]; then
+          echo "[INFO] Not eligible for lifecycle injection (or eligibility check failed), skipping package extraction."
+          exit 0
+        fi
+
+        operator-foundry fbc get-packages \
+          --dockerfile "$(params.DOCKERFILE)" \
+          --build-context "$(params.CONTEXT)" \
+          --output /shared/packages.txt
+
+        if [[ ! -s /shared/packages.txt ]]; then
+          echo "[INFO] No packages requiring lifecycle injection found."
+        else
+          echo "[INFO] Packages to inject lifecycle for: $(cat /shared/packages.txt)"
+        fi
+
+    - name: generate-lifecycle
+      image: quay.io/updateplanner/plcc2fbc@sha256:9807068d283c7394d2cdca86e781f27a5f449305b8db1ebf7c213489f9dc264f
+      computeResources:
+        requests:
+          memory: 256Mi
+          cpu: 100m
+        limits:
+          memory: 256Mi
+      workingDir: /var/workdir/source
+      securityContext:
+        runAsUser: 0
+      onError: continue
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        if [[ ! -s /shared/packages.txt ]]; then
+          echo "[INFO] No packages to process, skipping lifecycle generation."
+          exit 0
+        fi
+
+        mkdir -p /shared/lifecycle
+
+        plcc2fbc --package "$(cat /shared/packages.txt)" --split /shared/lifecycle/
+
+    - name: inject-lifecycle
+      image: quay.io/asergien/operator-foundry@sha256:593353f989a03b3bbc97cab01d96086b1248d52c16bdb7ac33af4a091420edcf
+      computeResources:
+        requests:
+          memory: 64Mi
+          cpu: 50m
+        limits:
+          memory: 64Mi
+      workingDir: /var/workdir/source
+      securityContext:
+        runAsUser: 0
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        if [[ ! -s /shared/eligible ]]; then
+          echo "[ERROR] Lifecycle eligibility check failed to produce output." >&2
+          note="Task $(context.task.name) failed: lifecycle eligibility check errors. Check logs."
+          operator-foundry make-result-json --result FAILURE --failures 1 --note "${note}" \
+            > "$(results.TEST_OUTPUT.path)"
+          exit 0
+        fi
+
+        if [[ "$(cat /shared/eligible)" != "true" ]]; then
+          note="Task $(context.task.name) completed: Component not eligible for lifecycle injection (requires OCP 5.0+)."
+          operator-foundry make-result-json --result SUCCESS --successes 0 --note "${note}" \
+            > "$(results.TEST_OUTPUT.path)"
+          exit 0
+        fi
+
+        if [[ ! -s /shared/packages.txt ]]; then
+          echo "[ERROR] Component is eligible for lifecycle injection but no packages were found." >&2
+          note="Task $(context.task.name) failed: Component eligible (OCP 5.0+) but no packages requiring lifecycle injection were found."
+          operator-foundry make-result-json --result FAILURE --failures 1 --note "${note}" \
+            > "$(results.TEST_OUTPUT.path)"
+          exit 0
+        fi
+
+        GEN_EXIT_CODE=$(cat "$(steps.step-generate-lifecycle.exitCode.path)")
+        if [[ "$GEN_EXIT_CODE" != "0" ]]; then
+          echo "[ERROR] plcc2fbc generation failed with exit code $GEN_EXIT_CODE." >&2
+          note="Task $(context.task.name) failed: plcc2fbc generation errors. Check logs."
+          operator-foundry make-result-json --result FAILURE --failures 1 --note "${note}" \
+            > "$(results.TEST_OUTPUT.path)"
+          exit 0
+        fi
+
+        if ! operator-foundry fbc inject-lifecycle \
+          --dockerfile "$(params.DOCKERFILE)" \
+          --build-context "$(params.CONTEXT)" \
+          --packages "$(cat /shared/packages.txt)" \
+          --lifecycle-dir /shared/lifecycle/; then
+
+          echo "[ERROR] Failed to inject lifecycle data" >&2
+          note="Task $(context.task.name) failed: lifecycle injection errors. Check logs."
+          operator-foundry make-result-json --result FAILURE --failures 1 --note "${note}" \
+            > "$(results.TEST_OUTPUT.path)"
+          exit 0
+        fi
+
+        note="Task $(context.task.name) completed: Lifecycle data injected successfully."
+        operator-foundry make-result-json --result SUCCESS --successes 1 --note "${note}" \
+          > "$(results.TEST_OUTPUT.path)"
+
+    - name: create-trusted-artifact
+      image: quay.io/konflux-ci/build-trusted-artifacts:latest@sha256:9bd32f6bafb517b309e11a2d89365052b4ab3f1c9c23c4ffd45aff6f03960476
+      computeResources:
+        requests:
+          memory: 3Gi
+          cpu: 50m
+        limits:
+          memory: 3Gi
+      env:
+      - name: IMAGE_EXPIRES_AFTER
+        value: $(params.ociArtifactExpiresAfter)
+      args:
+        - create
+        - --store
+        - $(params.ociStorage)
+        - $(results.SOURCE_ARTIFACT.path)=/var/workdir/source
