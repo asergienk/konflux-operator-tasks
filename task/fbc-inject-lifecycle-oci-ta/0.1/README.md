@@ -2,7 +2,7 @@
 
 The fbc-inject-lifecycle-oci-ta task injects lifecycle data into a file-based catalog (FBC) component targeting OCP 5.0+. It determines the target OLM packages from the Dockerfile, generates lifecycle JSON files using `plcc2fbc`, and injects them into the catalog source directories.
 
-Lifecycle injection is skipped (with a successful result) if not all targeted OCP versions are >= 5.0. If the component is eligible (all targeted OCP versions >= 5.0), the task fails if it cannot find packages, generate lifecycle data, or inject it. The task produces an updated `SOURCE_ARTIFACT` containing the injected lifecycle data, which can be consumed by downstream tasks such as `prefetch-dependencies`.
+Lifecycle injection is skipped (with a successful result) if not all targeted OCP versions are >= 5.0. If the component is eligible (all targeted OCP versions >= 5.0), the task fails if package discovery errors out, no packages are found, lifecycle data cannot be generated for all requested packages, or injection fails. The task produces an updated `SOURCE_ARTIFACT` containing the injected lifecycle data, which can be consumed by downstream tasks such as `prefetch-dependencies`. `SOURCE_ARTIFACT` is always written, even on failure or when the component is not eligible — in those cases it points to the original, unmodified source artifact.
 
 ## Parameters
 |name|description|default value|required|

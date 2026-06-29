@@ -56,19 +56,12 @@ spec:
         name: shared
   steps:
     - name: use-trusted-artifact
-      image: quay.io/konflux-ci/build-trusted-artifacts:latest@sha256:a246cf2267fe6fa68ae8885c6ca4141923edca3ccf9b56838d1ebe369d31b46d
-      computeResources:
-        requests:
-          memory: 4Gi
-          cpu: 50m
-        limits:
-          memory: 4Gi
+      image: quay.io/konflux-ci/build-trusted-artifacts:latest@sha256:3e6dc09d80042c78c0c3bbcb4faf91f493bffc45cdee0978f285a2e57ac8aebb
       args:
         - use
         - $(params.SOURCE_ARTIFACT)=/var/workdir/source
-
     - name: check-lifecycle-eligibility
-      image: quay.io/asergien/operator-foundry@sha256:593353f989a03b3bbc97cab01d96086b1248d52c16bdb7ac33af4a091420edcf
+      image: quay.io/konflux-ci/operator-foundry:0.1@sha256:c9391e9279731f05564d76d62218839c51bb6632137662c58cc4690e5da3090b
       computeResources:
         requests:
           memory: 64Mi
@@ -76,8 +69,6 @@ spec:
         limits:
           memory: 64Mi
       workingDir: /var/workdir/source
-      securityContext:
-        runAsUser: 0
       onError: continue
       script: |
         #!/usr/bin/env bash
@@ -88,9 +79,8 @@ spec:
           --output /shared/eligible
 
         echo "[INFO] Component eligible for lifecycle injection (targets OCP 5.0+): $(cat /shared/eligible)"
-
     - name: get-packages
-      image: quay.io/asergien/operator-foundry@sha256:593353f989a03b3bbc97cab01d96086b1248d52c16bdb7ac33af4a091420edcf
+      image: quay.io/konflux-ci/operator-foundry:0.1@sha256:c9391e9279731f05564d76d62218839c51bb6632137662c58cc4690e5da3090b
       computeResources:
         requests:
           memory: 64Mi
@@ -98,8 +88,7 @@ spec:
         limits:
           memory: 64Mi
       workingDir: /var/workdir/source
-      securityContext:
-        runAsUser: 0
+      onError: continue
       script: |
         #!/usr/bin/env bash
         set -euo pipefail
@@ -119,9 +108,8 @@ spec:
         else
           echo "[INFO] Packages to inject lifecycle for: $(cat /shared/packages.txt)"
         fi
-
     - name: generate-lifecycle
-      image: quay.io/updateplanner/plcc2fbc@sha256:9807068d283c7394d2cdca86e781f27a5f449305b8db1ebf7c213489f9dc264f
+      image: quay.io/konflux-ci/fbc-update-planner:0.1@sha256:836b714ccce3645dce7e30b6e29ef72c80c4e81274a52452f9008865a9828f71
       computeResources:
         requests:
           memory: 256Mi
@@ -129,8 +117,6 @@ spec:
         limits:
           memory: 256Mi
       workingDir: /var/workdir/source
-      securityContext:
-        runAsUser: 0
       onError: continue
       script: |
         #!/usr/bin/env bash
@@ -144,9 +130,8 @@ spec:
         mkdir -p /shared/lifecycle
 
         plcc2fbc --package "$(cat /shared/packages.txt)" --split /shared/lifecycle/
-
     - name: inject-lifecycle
-      image: quay.io/asergien/operator-foundry@sha256:593353f989a03b3bbc97cab01d96086b1248d52c16bdb7ac33af4a091420edcf
+      image: quay.io/konflux-ci/operator-foundry:0.1@sha256:c9391e9279731f05564d76d62218839c51bb6632137662c58cc4690e5da3090b
       computeResources:
         requests:
           memory: 64Mi
@@ -156,67 +141,92 @@ spec:
       workingDir: /var/workdir/source
       securityContext:
         runAsUser: 0
-      script: |
-        #!/usr/bin/env bash
-        set -euo pipefail
+      results:
+        - name: skip_create_trusted_artifact
+          description: Set to 'true' if create-trusted-artifact should be skipped.
+      command: ["/bin/bash", "-c"]
+      args:
+        - |
+          #!/usr/bin/env bash
+          set -euo pipefail
 
-        if [[ ! -s /shared/eligible ]]; then
-          echo "[ERROR] Lifecycle eligibility check failed to produce output." >&2
-          note="Task $(context.task.name) failed: lifecycle eligibility check errors. Check logs."
-          operator-foundry make-result-json --result FAILURE --failures 1 --note "${note}" \
+          if [[ ! -s /shared/eligible ]]; then
+            echo "[ERROR] Lifecycle eligibility check failed to produce output." >&2
+            note="Task $(context.task.name) failed: lifecycle eligibility check errors. Check logs."
+            operator-foundry make-result-json --result FAILURE --failures 1 --note "${note}" \
+              > "$(results.TEST_OUTPUT.path)"
+            echo -n "true" > "$(step.results.skip_create_trusted_artifact.path)"
+            echo -n "$(params.SOURCE_ARTIFACT)" > "$(results.SOURCE_ARTIFACT.path)"
+            exit 0
+          fi
+
+          if [[ "$(cat /shared/eligible)" != "true" ]]; then
+            echo "[INFO] Component not eligible for lifecycle injection (requires OCP 5.0+), skipping."
+            note="Task $(context.task.name) completed: Component not eligible for lifecycle injection (requires OCP 5.0+)."
+            operator-foundry make-result-json --result SUCCESS --successes 0 --note "${note}" \
+              > "$(results.TEST_OUTPUT.path)"
+            echo -n "true" > "$(step.results.skip_create_trusted_artifact.path)"
+            echo -n "$(params.SOURCE_ARTIFACT)" > "$(results.SOURCE_ARTIFACT.path)"
+            exit 0
+          fi
+
+          GET_EXIT_CODE=$(cat /tekton/steps/step-get-packages/exitCode)
+          if [[ "$GET_EXIT_CODE" != "0" ]]; then
+            echo "[ERROR] get-packages step failed with exit code $GET_EXIT_CODE." >&2
+            note="Task $(context.task.name) failed: get-packages errors. Check logs."
+            operator-foundry make-result-json --result FAILURE --failures 1 --note "${note}" \
+              > "$(results.TEST_OUTPUT.path)"
+            echo -n "true" > "$(step.results.skip_create_trusted_artifact.path)"
+            echo -n "$(params.SOURCE_ARTIFACT)" > "$(results.SOURCE_ARTIFACT.path)"
+            exit 0
+          fi
+
+          if [[ ! -s /shared/packages.txt ]]; then
+            echo "[ERROR] Component is eligible for lifecycle injection but no packages were found." >&2
+            note="Task $(context.task.name) failed: Component eligible (OCP 5.0+) but no packages requiring lifecycle injection were found."
+            operator-foundry make-result-json --result FAILURE --failures 1 --note "${note}" \
+              > "$(results.TEST_OUTPUT.path)"
+            echo -n "true" > "$(step.results.skip_create_trusted_artifact.path)"
+            echo -n "$(params.SOURCE_ARTIFACT)" > "$(results.SOURCE_ARTIFACT.path)"
+            exit 0
+          fi
+
+          GEN_EXIT_CODE=$(cat /tekton/steps/step-generate-lifecycle/exitCode)
+          if [[ "$GEN_EXIT_CODE" != "0" ]]; then
+            echo "[ERROR] plcc2fbc generation failed with exit code $GEN_EXIT_CODE." >&2
+            note="Task $(context.task.name) failed: plcc2fbc generation errors. Check logs."
+            operator-foundry make-result-json --result FAILURE --failures 1 --note "${note}" \
+              > "$(results.TEST_OUTPUT.path)"
+            echo -n "true" > "$(step.results.skip_create_trusted_artifact.path)"
+            echo -n "$(params.SOURCE_ARTIFACT)" > "$(results.SOURCE_ARTIFACT.path)"
+            exit 0
+          fi
+
+          if ! operator-foundry fbc inject-lifecycle \
+            --dockerfile "$(params.DOCKERFILE)" \
+            --build-context "$(params.CONTEXT)" \
+            --packages "$(cat /shared/packages.txt)" \
+            --lifecycle-dir /shared/lifecycle/; then
+
+            echo "[ERROR] Failed to inject lifecycle data" >&2
+            note="Task $(context.task.name) failed: lifecycle injection errors. Check logs."
+            operator-foundry make-result-json --result FAILURE --failures 1 --note "${note}" \
+              > "$(results.TEST_OUTPUT.path)"
+            echo -n "true" > "$(step.results.skip_create_trusted_artifact.path)"
+            echo -n "$(params.SOURCE_ARTIFACT)" > "$(results.SOURCE_ARTIFACT.path)"
+            exit 0
+          fi
+
+          note="Task $(context.task.name) completed: Lifecycle data injected successfully."
+          operator-foundry make-result-json --result SUCCESS --successes 1 --note "${note}" \
             > "$(results.TEST_OUTPUT.path)"
-          exit 0
-        fi
-
-        if [[ "$(cat /shared/eligible)" != "true" ]]; then
-          note="Task $(context.task.name) completed: Component not eligible for lifecycle injection (requires OCP 5.0+)."
-          operator-foundry make-result-json --result SUCCESS --successes 0 --note "${note}" \
-            > "$(results.TEST_OUTPUT.path)"
-          exit 0
-        fi
-
-        if [[ ! -s /shared/packages.txt ]]; then
-          echo "[ERROR] Component is eligible for lifecycle injection but no packages were found." >&2
-          note="Task $(context.task.name) failed: Component eligible (OCP 5.0+) but no packages requiring lifecycle injection were found."
-          operator-foundry make-result-json --result FAILURE --failures 1 --note "${note}" \
-            > "$(results.TEST_OUTPUT.path)"
-          exit 0
-        fi
-
-        GEN_EXIT_CODE=$(cat "$(steps.step-generate-lifecycle.exitCode.path)")
-        if [[ "$GEN_EXIT_CODE" != "0" ]]; then
-          echo "[ERROR] plcc2fbc generation failed with exit code $GEN_EXIT_CODE." >&2
-          note="Task $(context.task.name) failed: plcc2fbc generation errors. Check logs."
-          operator-foundry make-result-json --result FAILURE --failures 1 --note "${note}" \
-            > "$(results.TEST_OUTPUT.path)"
-          exit 0
-        fi
-
-        if ! operator-foundry fbc inject-lifecycle \
-          --dockerfile "$(params.DOCKERFILE)" \
-          --build-context "$(params.CONTEXT)" \
-          --packages "$(cat /shared/packages.txt)" \
-          --lifecycle-dir /shared/lifecycle/; then
-
-          echo "[ERROR] Failed to inject lifecycle data" >&2
-          note="Task $(context.task.name) failed: lifecycle injection errors. Check logs."
-          operator-foundry make-result-json --result FAILURE --failures 1 --note "${note}" \
-            > "$(results.TEST_OUTPUT.path)"
-          exit 0
-        fi
-
-        note="Task $(context.task.name) completed: Lifecycle data injected successfully."
-        operator-foundry make-result-json --result SUCCESS --successes 1 --note "${note}" \
-          > "$(results.TEST_OUTPUT.path)"
-
+          echo -n "false" > "$(step.results.skip_create_trusted_artifact.path)"
     - name: create-trusted-artifact
-      image: quay.io/konflux-ci/build-trusted-artifacts:latest@sha256:9bd32f6bafb517b309e11a2d89365052b4ab3f1c9c23c4ffd45aff6f03960476
-      computeResources:
-        requests:
-          memory: 3Gi
-          cpu: 50m
-        limits:
-          memory: 3Gi
+      image: quay.io/konflux-ci/build-trusted-artifacts:latest@sha256:3e6dc09d80042c78c0c3bbcb4faf91f493bffc45cdee0978f285a2e57ac8aebb
+      when:
+        - input: "$(steps.inject-lifecycle.results.skip_create_trusted_artifact)"
+          operator: in
+          values: ["false"]
       env:
       - name: IMAGE_EXPIRES_AFTER
         value: $(params.ociArtifactExpiresAfter)
