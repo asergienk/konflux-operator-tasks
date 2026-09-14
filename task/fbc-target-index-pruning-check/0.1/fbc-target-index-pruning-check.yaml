@@ -55,6 +55,11 @@ spec:
         capabilities:
           add:
             - SETFCAP
+          drop:
+            - ALL
+        allowPrivilegeEscalation: false
+        seccompProfile:
+          type: RuntimeDefault
       computeResources:
         limits:
           memory: 2Gi
@@ -81,6 +86,11 @@ spec:
         capabilities:
           add:
             - SETFCAP
+          drop:
+            - ALL
+        allowPrivilegeEscalation: false
+        seccompProfile:
+          type: RuntimeDefault
       computeResources:
         limits:
           memory: 10Gi

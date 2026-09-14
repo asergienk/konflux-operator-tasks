@@ -200,8 +200,6 @@ spec:
         limits:
           memory: 64Mi
       workingDir: /var/workdir/source
-      securityContext:
-        runAsUser: 0
       results:
         - name: skip_create_trusted_artifact
           description: Set to 'true' if create-trusted-artifact should be skipped.

@@ -310,6 +310,11 @@ spec:
         capabilities:
           add:
             - SETFCAP
+          drop:
+            - ALL
+        allowPrivilegeEscalation: false
+        seccompProfile:
+          type: RuntimeDefault
     - name: fips-operator-check-step-action
       params:
         - name: MAX_PARALLEL

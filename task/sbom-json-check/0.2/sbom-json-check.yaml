@@ -40,6 +40,11 @@ spec:
       capabilities:
         add:
           - SETFCAP
+        drop:
+          - ALL
+      allowPrivilegeEscalation: false
+      seccompProfile:
+        type: RuntimeDefault
     volumeMounts:
       - mountPath: /shared
         name: shared

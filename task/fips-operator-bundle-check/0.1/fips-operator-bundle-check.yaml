@@ -47,6 +47,11 @@ spec:
         capabilities:
           add:
             - SETFCAP
+          drop:
+            - ALL
+        allowPrivilegeEscalation: false
+        seccompProfile:
+          type: RuntimeDefault
       script: |
         #!/usr/bin/env bash
         set -euo pipefail

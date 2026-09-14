@@ -93,8 +93,6 @@ spec:
           value: $(params.OPM_OUTPUT_PATH)
         - name: SOURCE_ARTIFACT_PARAM
           value: $(params.SOURCE_ARTIFACT)
-      securityContext:
-        runAsUser: 0
       command: ["/bin/bash", "-c"]
       args:
         - |
@@ -146,8 +144,6 @@ spec:
           cpu: 250m
           memory: 64Mi
       workingDir: /var/workdir/source
-      securityContext:
-        runAsUser: 0
       env:
         - name: OPM_OUTPUT_PATH_PARAM
           value: $(params.OPM_OUTPUT_PATH)
@@ -297,8 +293,6 @@ spec:
           cpu: 50m
           memory: 64Mi
       workingDir: /var/workdir/source
-      securityContext:
-        runAsUser: 0
       env:
         - name: IDMS_PATH_PARAM
           value: $(params.IDMS_PATH)
