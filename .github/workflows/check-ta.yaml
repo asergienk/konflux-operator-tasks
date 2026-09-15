@@ -4,20 +4,20 @@ name: Validate PR - Trusted Artifact variants
     branches: [main]
   merge_group:
     types: [checks_requested]
+permissions:
+  contents: read
 jobs:
   go:
     name: Check Trusted Artifact variants
     runs-on: ubuntu-latest
     steps:
       - name: Check out code
-        # actions/checkout@v4.4.0
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Check Trusted Artifact variants
         id: check
         run: hack/generate-ta-tasks.sh
         if: ${{ always() && steps.check.conclusion == 'failure' }}
-        # actions/upload-artifact@v4.6.2
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: Trusted artifacts patch
           path: ./ta.patch

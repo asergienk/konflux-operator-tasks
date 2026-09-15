@@ -5,7 +5,10 @@ runs:
   using: "composite"
   steps:
     - run: |
-        curl -LO "https://github.com/tektoncd/cli/releases/download/v${TKN_CLI_VERSION}/tektoncd-cli-${TKN_CLI_VERSION}_Linux-64bit.deb"
+        set -euo pipefail
+        curl -fLO "https://github.com/tektoncd/cli/releases/download/v${TKN_CLI_VERSION}/tektoncd-cli-${TKN_CLI_VERSION}_Linux-64bit.deb"
+        curl -fLO "https://github.com/tektoncd/cli/releases/download/v${TKN_CLI_VERSION}/checksums.txt"
+        sha256sum --check --ignore-missing checksums.txt
         sudo dpkg -i ./tektoncd-cli-${TKN_CLI_VERSION}_Linux-64bit.deb
       shell: bash
       env:
