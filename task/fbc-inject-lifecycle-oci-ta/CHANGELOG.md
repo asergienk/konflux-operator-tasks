@@ -4,6 +4,26 @@
 
 ### Added
 
+- Added a built-in `SKIP_PACKAGES` list passed via `--skip-packages` to
+  `operator-foundry` in the `get-packages` step. When all discovered packages
+  are on the skip list, the resulting `packages.txt` is empty and the
+  `inject-lifecycle` step treats it as a no-op success. The skip list is an
+  internal operational control managed via task releases (not user-configurable),
+  tied to the PLMCORE-16364 data remediation effort.
+
+### Changed
+
+- Bumped the `operator-foundry` image digest to
+  `sha256:3d7c066a0bd46421b2e3dced9d9c7d5ce3891ea5bf88ccbfe19770c3413f9146`
+  (adds `--skip-packages` support to `fbc get-packages`).
+
+- Changed the `inject-lifecycle` step: when `packages.txt` is empty after
+  `get-packages` exits 0, the task now reports `SUCCESS` with 0 successes
+  (no-op) instead of `FAILURE`. This covers the case where all discovered
+  packages were filtered by the skip list.
+
+<!-- previous unreleased content below -->
+
 - Added optional `CATALOG_PATH` param (default `""`). When set, Dockerfile
   parsing is skipped for the `inject-lifecycle` step and `lifecycle.json` is
   injected directly into `<CATALOG_PATH>/<package>/` for each package. Intended

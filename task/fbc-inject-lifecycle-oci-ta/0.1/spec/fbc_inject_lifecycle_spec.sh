@@ -108,6 +108,7 @@ Describe "inject-lifecycle step: eligibility check failures"
         echo "1" > "${tekton_steps_dir}/step-check-lifecycle-eligibility/exitCode"
         When call bash "${inject_script}"
         The status should be success
+        The error should include "eligibility check failed"
         The contents of file "${results_dir}/TEST_OUTPUT" should include "FAILURE"
         The contents of file "${results_dir}/skip_create_trusted_artifact" should equal "true"
         The file "${inject_flags_file}" should not be exist
@@ -117,6 +118,7 @@ Describe "inject-lifecycle step: eligibility check failures"
         echo "false" > "${shared_dir}/eligible"
         When call bash "${inject_script}"
         The status should be success
+        The output should include "not eligible for lifecycle injection"
         The contents of file "${results_dir}/TEST_OUTPUT" should include "SUCCESS"
         The contents of file "${results_dir}/skip_create_trusted_artifact" should equal "true"
         The file "${inject_flags_file}" should not be exist
@@ -130,15 +132,17 @@ Describe "inject-lifecycle step: downstream step failures"
         echo "1" > "${tekton_steps_dir}/step-get-packages/exitCode"
         When call bash "${inject_script}"
         The status should be success
+        The error should include "get-packages step failed"
         The contents of file "${results_dir}/TEST_OUTPUT" should include "FAILURE"
         The contents of file "${results_dir}/skip_create_trusted_artifact" should equal "true"
     End
 
-    It "reports FAILURE when eligible but no packages found"
+    It "reports SUCCESS when eligible but no packages found (all filtered)"
         > "${shared_dir}/packages.txt"
         When call bash "${inject_script}"
         The status should be success
-        The contents of file "${results_dir}/TEST_OUTPUT" should include "FAILURE"
+        The output should include "packages are on the skip list"
+        The contents of file "${results_dir}/TEST_OUTPUT" should include "SUCCESS"
         The contents of file "${results_dir}/skip_create_trusted_artifact" should equal "true"
     End
 
@@ -146,6 +150,7 @@ Describe "inject-lifecycle step: downstream step failures"
         echo "1" > "${tekton_steps_dir}/step-generate-lifecycle/exitCode"
         When call bash "${inject_script}"
         The status should be success
+        The error should include "plcc2fbc generation failed"
         The contents of file "${results_dir}/TEST_OUTPUT" should include "FAILURE"
         The contents of file "${results_dir}/skip_create_trusted_artifact" should equal "true"
     End
