@@ -349,6 +349,51 @@ spec:
           echo "Task was skipped. Exiting"
           exit 0
         fi
+    - name: push-fips-report
+      image: quay.io/konflux-ci/oras:latest@sha256:1cc659b4d30536ec98300ac551739ef36dee345a7dcfe06129fd78abdc3688ac
+      computeResources:
+        requests:
+          memory: 128Mi
+          cpu: 100m
+        limits:
+          memory: 128Mi
+          cpu: 100m
+      env:
+        - name: IMAGE_URL
+          value: $(params.image-url)
+        - name: IMAGE_DIGEST
+          value: $(params.image-digest)
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        FIPS_REPORT="/tekton/home/fips-report.json"
+        MEDIA_TYPE="application/vnd.redhat.fips-report+json"
+
+        if [ ! -f "${FIPS_REPORT}" ]; then
+          echo "No FIPS report found, task was skipped."
+          exit 0
+        fi
+
+        image_ref="${IMAGE_URL}@${IMAGE_DIGEST}"
+        echo "Attaching FIPS report to ${image_ref}"
+
+        select-oci-auth "${IMAGE_URL}" > "${HOME}/auth.json" || {
+          echo "Warning: Failed to obtain registry credentials for ${IMAGE_URL}. Skipping FIPS report upload."
+          exit 0
+        }
+
+        if ! retry oras attach \
+            --no-tty \
+            --registry-config "${HOME}/auth.json" \
+            --artifact-type "${MEDIA_TYPE}" \
+            "${image_ref}" \
+            "${FIPS_REPORT}:${MEDIA_TYPE}"; then
+          echo "Warning: Failed to attach FIPS report to ${image_ref}. The scan result is unaffected."
+          exit 0
+        fi
+
+        echo "FIPS report successfully attached to ${image_ref}"
   workspaces:
     - name: workspace
   volumes:
