@@ -27,6 +27,18 @@ spec:
       description: Maximum number of images to process in parallel within this bucket
       type: string
       default: "2"
+    - name: image-url
+      description: >-
+        URL of the FBC image to attach the per-bucket FIPS report to as an OCI referrer.
+        Leave empty to skip the report upload.
+      type: string
+      default: ""
+    - name: image-digest
+      description: >-
+        Digest of the FBC image (sha256:...) used together with image-url to form
+        the subject reference for oras attach. Leave empty to skip the report upload.
+      type: string
+      default: ""
   results:
     - name: IMAGES_PROCESSED
       description: Images processed in the task
@@ -169,3 +181,56 @@ spec:
           # Stepaction didn't produce output (no images to check) - skip without output
           echo "No images to check in this bucket, skipping"
         fi
+
+    - name: push-partial-report
+      image: quay.io/konflux-ci/oras:latest@sha256:1cc659b4d30536ec98300ac551739ef36dee345a7dcfe06129fd78abdc3688ac
+      computeResources:
+        limits:
+          memory: 128Mi
+          cpu: 100m
+        requests:
+          cpu: 100m
+          memory: 128Mi
+      env:
+        - name: IMAGE_URL
+          value: $(params.image-url)
+        - name: IMAGE_DIGEST
+          value: $(params.image-digest)
+        - name: BUCKET_INDEX
+          value: $(params.BUCKET_INDEX)
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        FIPS_REPORT="/tekton/home/fips-report.json"
+        MEDIA_TYPE="application/vnd.redhat.fips-report+json"
+
+        if [ -z "${IMAGE_URL}" ] || [ -z "${IMAGE_DIGEST}" ]; then
+          echo "No image-url or image-digest provided. Skipping FIPS report upload."
+          exit 0
+        fi
+
+        if [ ! -f "${FIPS_REPORT}" ]; then
+          echo "No FIPS report for bucket ${BUCKET_INDEX} (empty bucket). Skipping."
+          exit 0
+        fi
+
+        image_ref="${IMAGE_URL}@${IMAGE_DIGEST}"
+        echo "Attaching per-bucket FIPS report (bucket ${BUCKET_INDEX}) to ${image_ref}"
+
+        select-oci-auth "${IMAGE_URL}" > "${HOME}/auth.json" || {
+          echo "Warning: Failed to obtain registry credentials for ${IMAGE_URL}. Skipping FIPS report upload."
+          exit 0
+        }
+
+        if ! retry oras attach \
+            --no-tty \
+            --registry-config "${HOME}/auth.json" \
+            --artifact-type "${MEDIA_TYPE}" \
+            "${image_ref}" \
+            "${FIPS_REPORT}:${MEDIA_TYPE}"; then
+          echo "Warning: Failed to attach FIPS report to ${image_ref}. The scan result is unaffected."
+          exit 0
+        fi
+
+        echo "FIPS report for bucket ${BUCKET_INDEX} successfully attached to ${image_ref}"
