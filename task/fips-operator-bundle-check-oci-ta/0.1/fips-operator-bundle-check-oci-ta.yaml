@@ -181,9 +181,9 @@ spec:
       ref:
         params:
           - name: url
-            value: https://github.com/konflux-ci/konflux-operator-tasks
+            value: https://github.com/asergienk/konflux-operator-tasks
           - name: revision
-            value: 1bbd699c0907b1f3ee164372f53f0e7a9c3e8ae6
+            value: 2e0f826f09c2c427576b1f4f1d2584848c09636e
           - name: pathInRepo
             value: stepactions/fips-operator-check-step-action/0.1/fips-operator-check-step-action.yaml
         resolver: git
